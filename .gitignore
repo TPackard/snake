@@ -1,0 +1,10 @@
+# binary files
+*.o
+snake
+
+# vim swapfiles
+*.swo
+*.swp
+
+# test files
+test/*
