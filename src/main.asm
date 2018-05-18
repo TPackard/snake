@@ -6,7 +6,7 @@
 ;
 ;            By Tyler Packard
 ;
-;            started 08/27/17
+;            started 08/27/16
 ;             ended ??/??/??
 ;
 section .rodata
@@ -68,6 +68,7 @@ snake_len: resw 1       ; length of snake
 ; snake buffer (sbuf)
 sbuf_base: resq 1       ; address of base of snake buffer
 sbuf_size: resw 1       ; size of snake buffer
+sbuf_mask: resw 1       ; mask for element indices in buffer
 sbuf_off:  resw 1       ; offset of head within snake buffer
 
 ; food
@@ -80,6 +81,10 @@ old_ts: resq 2          ; old timespec, for finding time difference between upda
 
 section .text
 _start:
+    ; save stack
+    push rbp
+    push rsp
+
     ; initialize ncurses with standard US locale
     mov rsi, locale
     mov rdi, LC_ALL
@@ -102,10 +107,18 @@ _start:
     call keypad
 
     ; create snake segment buffer
-    mov word [sbuf_size], 72    ; size of snake segment buffer
-    push rbp
+    jmp .no_clr_sbuf            ; don't clear snake buffer on first initialization
+.init_sbuf:
+    add rsp, [sbuf_size]        ; clear snake buffer
+.no_clr_sbuf:
+    mov word [sbuf_size], 32    ; size of snake buffer
     sub rsp, [sbuf_size]        ; allocate space for circular snake buffer
     mov [sbuf_base], rsp        ; save base address of buffer
+
+    xor rax, rax                ; create mask for buffer indices
+    mov ax, [sbuf_size]         ;
+    dec rax                     ;
+    mov [sbuf_mask], ax         ;
 
     ; initialize snake
 .init_snake:
@@ -115,10 +128,12 @@ _start:
     mov dword [rsp + 4],  0x00040005    ;
     mov dword [rsp + 8],  0x00040006    ;
     mov dword [rsp + 12], 0x00040007    ;
-    mov word [sbuf_off], 12             ; save offset of head withing buffer
+    mov word [sbuf_off],  12            ; save offset of head withing buffer
 
     ; draw snake
     call clear              ; clear in case resetting after death
+    xor r12, r12
+    mov r12w, [sbuf_mask]   ; get snake buffer index mask
     xor rcx, rcx
     mov cx, [snake_len]     ; loop over all snake segments
     xor rbp, rbp
@@ -127,7 +142,7 @@ _start:
 .init_loop:
     ; decrement snake segment offset
     sub rbp, 4
-    and rbp, 0x3F
+    and rbp, r12
 .init_loop_start:
     ; print snake segment
     mov edi, [rbp + rsp]    ; get snake segment (offset + base addr)
@@ -230,13 +245,15 @@ _start:
     ; make sure snake hasn't collided with itself
     call in_snake
     test rax, rax
-    jnz .init_snake         ; reset game on collision
+    jnz .init_sbuf          ; reset game on collision
 
     ; save new head position
+    xor rax, rax
+    mov ax, [sbuf_mask]         ; get snake buffer index mask
     xor rbp, rbp
     mov bp, [sbuf_off]
     add rbp, 4
-    and rbp, 0x3F               ; get new head offset
+    and rbp, rax                ; get new head offset
     mov word [sbuf_off], bp     ; save offset
     mov [rbp + rsp], edi        ; save new location of head
 
@@ -253,16 +270,43 @@ _start:
 
     ; extend snake and add new food
     inc word [snake_len]
+    mov ax, [sbuf_size]
+    shr ax, 2               ; get max capacity of snake buffer
+    cmp ax, [snake_len]
+    jg .no_extend_sbuf
+
+    ; extend snake buffer
+.b:
+    mov rbp, rsp            ; save old base address
+    sub sp, [sbuf_size]     ; double snake buffer size
+    mov [sbuf_base], rsp    ; save new buffer base address
+    shl ax, 3               ; double sbuf_size value (2 to undo shr, 1 to double)
+    mov [sbuf_size], ax     ;
+    dec ax                  ; extend mask for buffer indices
+    mov [sbuf_mask], ax     ;
+
+    ; shift snake segments from head to base of buffer to new base
+    xor rcx, rcx
+    mov cx, [sbuf_off]      ; loop from head to base address of snake buffer
+.sbuf_shift_loop:
+    mov eax, [rbp + rcx]    ; move data from address relative to old base address...
+    mov [rsp + rcx], eax    ; ...to address relative to new base address
+    sub rcx, 4
+    jns .sbuf_shift_loop    ; loop on non-negative offset
+
+.no_extend_sbuf:
     call add_food
     jmp .main_loop          ; skip erasing tail
 
 .no_food:
     ; erase tail
+    xor rbx, rbx
+    mov bx, [sbuf_mask]     ; get snake buffer index mask
     xor rax, rax
     mov ax, [snake_len]
     shl rax, 2              ; get distance of tail from head in bytes
     sub rbp, rax
-    and rbp, 0x3F           ; calculate tail offset
+    and rbp, rbx            ; calculate tail offset
     mov edi, [rbp + rsp]    ; get tail position
     mov rsi, blank_char
     call draw_char
@@ -274,11 +318,12 @@ _start:
     ; clean up and exit
     call endwin             ; close ncurses
     add sp, [sbuf_size]     ; reset stack
+    pop rsp                 ;
     pop rbp                 ;
 
     ; exit with code 0
     mov rax, SYS_EXIT
-    mov rdi, 0
+    xor rdi, rdi
     syscall
 
 
@@ -377,6 +422,8 @@ add_food:
 ;
 ; Determines whether or not a given position is inside the snake
 in_snake:
+    xor rax, rax
+    mov ax, [sbuf_mask]     ; get snake buffer index mask
     mov rbx, [sbuf_base]    ; get snake buffer base address
     xor rcx, rcx
     mov cx, [snake_len]     ; loop over all snake segments
@@ -386,7 +433,7 @@ in_snake:
 .loop:
     ; decrement snake segment offset
     sub rbp, 4
-    and rbp, 0x3F
+    and rbp, rax
 .loop_start:
     ; check if position is same as snake segment
     cmp edi, [rbp + rbx]

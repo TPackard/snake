@@ -27,8 +27,8 @@ run: all
 	./$(OUT)
 
 scratch: $(OBJ_DIR)
-	nasm -f $(FORMAT) test/scratch.asm -o $(OBJ_DIR)/test/scratch.o
-	$(LD) $(LDFLAGS) -o test/scratch $(OBJS)
+	nasm -f $(FORMAT) test/scratch.asm -o test/scratch.o
+	$(LD) $(LDFLAGS) -o test/scratch test/scratch.o
 	chmod +x test/scratch
 	./test/scratch
 
