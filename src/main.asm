@@ -7,7 +7,7 @@
 ;            By Tyler Packard
 ;
 ;            started 08/27/16
-;             ended ??/??/??
+;           completed ??/??/??
 ;
 section .rodata
 
@@ -23,6 +23,7 @@ extern keypad
 extern mvadd_wch
 extern nodelay
 extern noecho
+extern refresh
 extern setlocale
 extern stdscr
 
@@ -40,6 +41,16 @@ blank_char: dd 0, 0x0020, 0, 0, 0, 0, 0     ; equals ' '
 ; jump table for snake movement
 move_table: dq _start.MT_L, _start.MT_R, _start.MT_D, _start.MT_U
 
+; general constants
+INIT_SBUF_SIZE equ 32   ; initial snake buffer size
+FRAME_LEN equ 100000000 ; length of a single frame in nanoseconds
+
+; values corresponding to each direction
+DIR_LEFT  equ 0
+DIR_RIGHT equ 1
+DIR_DOWN  equ 2
+DIR_UP    equ 3
+
 ; keycodes
 key_down  equ 0x0102    ; down arrow
 key_up    equ 0x0103    ; up arrow
@@ -47,14 +58,16 @@ key_left  equ 0x0104    ; left arrow
 key_right equ 0x0105    ; right arrow
 key_q     equ 0x0071    ; Q
 
-; constants for external functions
-CLOCK_REALTIME equ 1    ; clock_gettime, get seconds and nanoseconds since epoch
+; constants for external functions (sorted alphabetically by function name)
 ERR equ -1              ; general error value
-LC_ALL equ 6            ; setlocale, modify all of locale
-O_RDONLY equ 0          ; open, open for reading only
+CLOCK_MONOTONIC equ 1   ; clock_nanosleep - measure relative to monotonic clock
+TIMER_ABSTIME equ 1     ; clock_nanosleep - sleep until absolute time
+O_RDONLY equ 0          ; open - open for reading only
+LC_ALL equ 6            ; setlocale - modify all of locale
 
 ; syscall numbers
 SYS_OPEN  equ 0x02
+SYS_CLOCK_NANOSLEEP equ 0xE6
 SYS_CLOSE equ 0x03
 SYS_EXIT  equ 0x3C
 
@@ -75,8 +88,7 @@ sbuf_off:  resw 1       ; offset of head within snake buffer
 food_pos: resd 1        ; position of food (y: word, x: word)
 
 ; timer
-cur_ts: resq 2          ; current time timespec
-old_ts: resq 2          ; old timespec, for finding time difference between updates
+sleep_ts: resq 2        ; timespec to sleep until (absolute time)
 
 
 section .text
@@ -107,22 +119,22 @@ _start:
     call keypad
 
     ; create snake segment buffer
-    jmp .no_clr_sbuf            ; don't clear snake buffer on first initialization
+    jmp .no_clr_sbuf                        ; don't clear snake buffer on first initialization
 .init_sbuf:
-    add rsp, [sbuf_size]        ; clear snake buffer
+    add rsp, [sbuf_size]                    ; clear snake buffer
 .no_clr_sbuf:
-    mov word [sbuf_size], 32    ; size of snake buffer
-    sub rsp, [sbuf_size]        ; allocate space for circular snake buffer
-    mov [sbuf_base], rsp        ; save base address of buffer
+    mov word [sbuf_size], INIT_SBUF_SIZE    ; size of snake buffer
+    sub rsp, [sbuf_size]                    ; allocate space for circular snake buffer
+    mov [sbuf_base], rsp                    ; save base address of buffer
 
-    xor rax, rax                ; create mask for buffer indices
-    mov ax, [sbuf_size]         ;
-    dec rax                     ;
-    mov [sbuf_mask], ax         ;
+    xor rax, rax                            ; create mask for buffer indices
+    mov ax, [sbuf_size]                     ;
+    dec rax                                 ;
+    mov [sbuf_mask], ax                     ;
 
     ; initialize snake
 .init_snake:
-    mov byte [snake_dir], 2             ; initialize direction down
+    mov byte [snake_dir], DIR_DOWN      ; initialize direction down
     mov word [snake_len], 4             ; initialize snake length
     mov dword [rsp],      0x00040004    ; default snake placement
     mov dword [rsp + 4],  0x00040005    ;
@@ -156,16 +168,35 @@ _start:
     call add_food
 
     ; save start time
-    mov rdi, CLOCK_REALTIME
-    mov rsi, old_ts
+    mov rdi, CLOCK_MONOTONIC
+    mov rsi, sleep_ts
     call clock_gettime
 
 ; main loop:
+; * sleep until next frame
 ; * get input
 ; * update snake position
 ; * check for collisions
 ; * redraw screen
 .main_loop:
+    call refresh
+
+    ; calculate next time to sleep to
+    mov rdx, sleep_ts
+    add qword [rdx + 8], FRAME_LEN      ; increase nanosecond count
+    cmp qword [rdx + 8], 1000000000     ; check for overlow in nanoseconds
+    jl .sleep
+    sub qword [rdx + 8], 1000000000     ; move overflow into second count
+    inc qword [rdx]                     ;
+
+    ; sleep
+.sleep:
+    mov rax, SYS_CLOCK_NANOSLEEP
+    mov rdi, CLOCK_MONOTONIC
+    mov rsi, TIMER_ABSTIME
+    xor r10, r10
+    syscall
+
     ; get input
     call getch
     cmp ax, ERR         ; error, assume no input
@@ -173,18 +204,18 @@ _start:
 
     ; parse input
     cmp rax, key_down   ; movement
-    je .move_snake
+    je .input_move
     cmp rax, key_up
-    je .move_snake
+    je .input_move
     cmp rax, key_left
-    je .move_snake
+    je .input_move
     cmp rax, key_right
-    je .move_snake
+    je .input_move
     cmp rax, key_q      ; quit
     je .exit_loop
     jmp .end_input      ; no input
 
-.move_snake:
+.input_move:
     ; ensure new direction is perpendicular
     ; (2nd least sig. bit must be different between new and old direction)
     xor al, [snake_dir]     ; xor new and old direction
@@ -197,27 +228,6 @@ _start:
     mov [snake_dir], al     ; save direction
 
 .end_input:
-    ; get time elapsed since last update
-    mov rdi, CLOCK_REALTIME
-    mov rsi, cur_ts
-    call clock_gettime
-
-    mov r13, [cur_ts + 8]   ; compare nanoseconds
-    cmp r13, [old_ts + 8]   ;
-    jg .check_time_diff
-    add r13, 1000000000     ; add 1 sec to current nanosec count if current nanosec
-                            ; count is less than old, so time delta can be calculated
-
-.check_time_diff:
-    sub r13, [old_ts + 8]   ; get time delta in nanoseconds
-    cmp r13, 100000000      ; check if 0.1 seconds have passed
-    jl .main_loop           ; skip update if not enough time has passed
-
-    ; save timespec
-    mov rdi, 1
-    mov rsi, old_ts
-    call clock_gettime
-
     ; get head location
     xor rbp, rbp
     mov bp, [sbuf_off]
@@ -276,7 +286,6 @@ _start:
     jg .no_extend_sbuf
 
     ; extend snake buffer
-.b:
     mov rbp, rsp            ; save old base address
     sub sp, [sbuf_size]     ; double snake buffer size
     mov [sbuf_base], rsp    ; save new buffer base address

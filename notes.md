@@ -8,10 +8,7 @@ Things to fix:
   * Add walls
   * Show score
   * Spawn snake in random position/shape/direction
-  * Keep stack of key input to allow for quick maneuvers
   * Detect terminal dimensions, spawn food all over
-  * Sleep so that it doesn't require so much processor time
   * Game over screen/better resetting
-  * Calculating time delta, currently inefficient (don't call clock_gettime twice)
   * Catch errors to function calls (getch, etc.)
   * Smoother animation with fractional block characters
