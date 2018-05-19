@@ -13,6 +13,7 @@ section .rodata
 
 ; externs
 extern add_wch
+extern beep
 extern clear
 extern clock_gettime
 extern curs_set
@@ -34,9 +35,11 @@ locale: db 'en_US.UTF-8',0
 urandom_path: db '/dev/urandom',0
 
 ; struct cchar_t constants for printing in ncurses
-block_char: dd 0, 0x2588, 0, 0, 0, 0, 0     ; equals '█'
-shade_char: dd 0, 0x2592, 0, 0, 0, 0, 0     ; equals '▒'
-blank_char: dd 0, 0x0020, 0, 0, 0, 0, 0     ; equals ' '
+shade_l_char: dd 0, 0x2591, 0, 0, 0, 0, 0   ; light shade   '░'
+shade_m_char: dd 0, 0x2592, 0, 0, 0, 0, 0   ; medium shade  '▒'
+shade_d_char: dd 0, 0x2593, 0, 0, 0, 0, 0   ; dark shade    '▓'
+block_char: dd 0, 0x2588, 0, 0, 0, 0, 0     ; full block    '█'
+blank_char: dd 0, 0x0020, 0, 0, 0, 0, 0     ; space         ' '
 
 ; jump table for snake movement
 move_table: dq _start.MT_L, _start.MT_R, _start.MT_D, _start.MT_U
@@ -44,6 +47,12 @@ move_table: dq _start.MT_L, _start.MT_R, _start.MT_D, _start.MT_U
 ; general constants
 INIT_SBUF_SIZE equ 32   ; initial snake buffer size
 FRAME_LEN equ 100000000 ; length of a single frame in nanoseconds
+
+; arena size
+arena_x equ 0           ; x position of arena
+arena_y equ 1           ; y position of arena
+arena_base  equ ((arena_y + 1) << 16) + arena_x + 1 ; position of top left corner
+arena_size  equ 16      ; inside size of one side of the arena
 
 ; values corresponding to each direction
 DIR_LEFT  equ 0
@@ -167,6 +176,34 @@ _start:
     ; initialize food
     call add_food
 
+    ; draw arena
+    xor rcx, rcx
+    mov rcx, arena_size + 1     ; get length of walls surrounding arena
+.draw_arena:
+    mov rbx, rcx                ; cache rcx...
+    mov rdi, rbx                ; draw top wall
+    add rdi, arena_y << 16      ; add y position
+    mov rsi, shade_l_char
+    call draw_char
+    mov rdi, rbx                ; draw bottom wall
+    dec rdi                     ; calculate x position
+    add rdi, (arena_size + arena_y + 1) << 16   ; add y position
+    mov rsi, shade_l_char
+    call draw_char
+    mov rdi, rbx                ; draw left wall
+    add rdi, arena_y - 1        ; calculate y position
+    shl rdi, 16                 ;
+    mov rsi, shade_l_char
+    call draw_char
+    mov rdi, rbx                ; draw right wall
+    add rdi, arena_y            ; calculate y position
+    shl rdi, 16                 ;
+    add rdi, arena_size + 1     ; add x position
+    mov rsi, shade_l_char
+    call draw_char
+    mov rcx, rbx                ; ...restore rcx
+    loop .draw_arena
+
     ; save start time
     mov rdi, CLOCK_MONOTONIC
     mov rsi, sleep_ts
@@ -257,6 +294,18 @@ _start:
     test rax, rax
     jnz .init_sbuf          ; reset game on collision
 
+    ; make sure snake is in arena
+    mov eax, edi
+    cmp ax, arena_x                 ; left wall
+    jle .init_sbuf
+    cmp ax, arena_x + arena_size    ; right wall
+    jg .init_sbuf
+    shr rax, 16                     ; get y position
+    cmp ax, arena_y                 ; top wall
+    jle .init_sbuf
+    cmp ax, arena_y + arena_size    ; bottom wall
+    jg .init_sbuf
+
     ; save new head position
     xor rax, rax
     mov ax, [sbuf_mask]         ; get snake buffer index mask
@@ -277,6 +326,7 @@ _start:
     mov eax, [food_pos]
     cmp eax, [rbp + rsp]    ; check if food and head location are the same
     jne .no_food            ; if not, continue to erase tail
+    call beep               ; ate food, play beep
 
     ; extend snake and add new food
     inc word [snake_len]
@@ -406,6 +456,7 @@ add_food:
 .gen_location:
     call rand_int           ; generate random new food position
     and rax, 0x000F000F     ; mask position to fit within arena
+    add rax, arena_base     ; offset to fit within arena
 
     ; regenerate if inside snake
     mov edi, eax
@@ -416,7 +467,7 @@ add_food:
     mov [food_pos], edi     ; save location
 
     ; draw food
-    mov rsi, shade_char
+    mov rsi, shade_m_char
     call draw_char
 
     add rsp, 8
