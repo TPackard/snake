@@ -24,6 +24,7 @@ extern keypad
 extern mvadd_wch
 extern nodelay
 extern noecho
+extern mvprintw
 extern refresh
 extern setlocale
 extern stdscr
@@ -33,6 +34,8 @@ global _start
 ; constant strings
 locale: db 'en_US.UTF-8',0
 urandom_path: db '/dev/urandom',0
+score_fmt: db 'score: %hd',0
+hi_score_fmt: db 'hi-score: %3hd',0
 
 ; struct cchar_t constants for printing in ncurses
 shade_l_char: dd 0, 0x2591, 0, 0, 0, 0, 0   ; light shade   '░'
@@ -80,6 +83,27 @@ SYS_CLOCK_NANOSLEEP equ 0xE6
 SYS_CLOSE equ 0x03
 SYS_EXIT  equ 0x3C
 
+; macro functions
+%macro print_score 0
+    xor rdi, rdi
+    xor rsi, rsi
+    mov rdx, score_fmt
+    xor rcx, rcx
+    mov cx, [score]
+    xor rax, rax
+    call mvprintw
+%endmacro
+
+%macro print_hi_score 0
+    xor rdi, rdi
+    mov rsi, 23
+    mov rdx, hi_score_fmt
+    xor rcx, rcx
+    mov cx, [hi_score]
+    xor rax, rax
+    call mvprintw
+%endmacro
+
 
 section .bss
 
@@ -95,6 +119,10 @@ sbuf_off:  resw 1       ; offset of head within snake buffer
 
 ; food
 food_pos: resd 1        ; position of food (y: word, x: word)
+
+; game metadata
+score: resw 1           ; points scored
+hi_score: resw 1        ; highest points scored in session
 
 ; timer
 sleep_ts: resq 2        ; timespec to sleep until (absolute time)
@@ -143,7 +171,7 @@ _start:
 
     ; initialize snake
 .init_snake:
-    mov byte [snake_dir], DIR_DOWN      ; initialize direction down
+    mov byte [snake_dir], DIR_RIGHT     ; initialize direction right
     mov word [snake_len], 4             ; initialize snake length
     mov dword [rsp],      0x00040004    ; default snake placement
     mov dword [rsp + 4],  0x00040005    ;
@@ -203,6 +231,16 @@ _start:
     call draw_char
     mov rcx, rbx                ; ...restore rcx
     loop .draw_arena
+
+    ; set scores and print
+    mov ax, [score]
+    cmp ax, [hi_score]
+    jle .reset_score
+    mov [hi_score], ax
+.reset_score:
+    mov word [score], 0
+    print_score
+    print_hi_score
 
     ; save start time
     mov rdi, CLOCK_MONOTONIC
@@ -327,6 +365,10 @@ _start:
     cmp eax, [rbp + rsp]    ; check if food and head location are the same
     jne .no_food            ; if not, continue to erase tail
     call beep               ; ate food, play beep
+
+    ; print score
+    inc word [score]        ; increase score
+    print_score
 
     ; extend snake and add new food
     inc word [snake_len]
