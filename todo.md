@@ -1,8 +1,5 @@
-Notes
-=====
-
-Things to look at:
-  * SIGWINCH, signal sent on window size change.
+TODO
+====
 
 Things to fix:
   * Spawn snake in random position/shape/direction
@@ -12,3 +9,6 @@ Things to fix:
   * Try to clean up arena drawing code
   * Catch errors to function calls (getch, etc.)
   * Smoother animation with fractional block characters
+
+Things to look at:
+  * SIGWINCH, signal sent on window size change.

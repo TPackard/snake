@@ -32,30 +32,30 @@ extern stdscr
 global _start
 
 ; constant strings
-locale: db 'en_US.UTF-8',0
-urandom_path: db '/dev/urandom',0
-score_fmt: db 'score: %hd',0
-hi_score_fmt: db 'hi-score: %3hd',0
+LOCALE_STR: db 'en_US.UTF-8',0
+URANDOM_PATH: db '/dev/urandom',0
+SCORE_FMT: db 'score: %hd',0
+HI_SCORE_FMT: db 'hi-score: %3hd',0
 
 ; struct cchar_t constants for printing in ncurses
-shade_l_char: dd 0, 0x2591, 0, 0, 0, 0, 0   ; light shade   '░'
-shade_m_char: dd 0, 0x2592, 0, 0, 0, 0, 0   ; medium shade  '▒'
-shade_d_char: dd 0, 0x2593, 0, 0, 0, 0, 0   ; dark shade    '▓'
-block_char: dd 0, 0x2588, 0, 0, 0, 0, 0     ; full block    '█'
-blank_char: dd 0, 0x0020, 0, 0, 0, 0, 0     ; space         ' '
+SHADE_L_CHAR: dd 0, 0x2591, 0, 0, 0, 0, 0   ; light shade   '░'
+SHADE_M_CHAR: dd 0, 0x2592, 0, 0, 0, 0, 0   ; medium shade  '▒'
+SHADE_D_CHAR: dd 0, 0x2593, 0, 0, 0, 0, 0   ; dark shade    '▓'
+BLOCK_CHAR: dd 0, 0x2588, 0, 0, 0, 0, 0     ; full block    '█'
+BLANK_CHAR: dd 0, 0x0020, 0, 0, 0, 0, 0     ; space         ' '
 
 ; jump table for snake movement
-move_table: dq _start.MT_L, _start.MT_R, _start.MT_D, _start.MT_U
+MOVE_TABLE: dq _start.MT_L, _start.MT_R, _start.MT_D, _start.MT_U
 
 ; general constants
 INIT_SBUF_SIZE equ 32   ; initial snake buffer size
 FRAME_LEN equ 100000000 ; length of a single frame in nanoseconds
 
 ; arena size
-arena_x equ 0           ; x position of arena
-arena_y equ 1           ; y position of arena
-arena_base  equ ((arena_y + 1) << 16) + arena_x + 1 ; position of top left corner
-arena_size  equ 16      ; inside size of one side of the arena
+ARENA_X equ 0           ; x position of arena
+ARENA_Y equ 1           ; y position of arena
+ARENA_BASE  equ ((ARENA_Y + 1) << 16) + ARENA_X + 1 ; position of top left corner
+ARENA_SIZE  equ 16      ; inside size of one side of the arena
 
 ; values corresponding to each direction
 DIR_LEFT  equ 0
@@ -64,11 +64,11 @@ DIR_DOWN  equ 2
 DIR_UP    equ 3
 
 ; keycodes
-key_down  equ 0x0102    ; down arrow
-key_up    equ 0x0103    ; up arrow
-key_left  equ 0x0104    ; left arrow
-key_right equ 0x0105    ; right arrow
-key_q     equ 0x0071    ; Q
+KEY_DOWN  equ 0x0102    ; down arrow
+KEY_UP    equ 0x0103    ; up arrow
+KEY_LEFT  equ 0x0104    ; left arrow
+KEY_RIGHT equ 0x0105    ; right arrow
+KEY_Q     equ 0x0071    ; Q
 
 ; constants for external functions (sorted alphabetically by function name)
 ERR equ -1              ; general error value
@@ -84,20 +84,20 @@ SYS_CLOSE equ 0x03
 SYS_EXIT  equ 0x3C
 
 ; macro functions
-%macro print_score 0
+%macro PRINT_SCORE 0
     xor rdi, rdi
     xor rsi, rsi
-    mov rdx, score_fmt
+    mov rdx, SCORE_FMT
     xor rcx, rcx
     mov cx, [score]
     xor rax, rax
     call mvprintw
 %endmacro
 
-%macro print_hi_score 0
+%macro PRINT_HI_SCORE 0
     xor rdi, rdi
-    mov rsi, 23
-    mov rdx, hi_score_fmt
+    mov rsi, ARENA_SIZE * 2 - 9
+    mov rdx, HI_SCORE_FMT
     xor rcx, rcx
     mov cx, [hi_score]
     xor rax, rax
@@ -121,7 +121,7 @@ sbuf_off:  resw 1       ; offset of head within snake buffer
 food_pos: resd 1        ; position of food (y: word, x: word)
 
 ; game metadata
-score: resw 1           ; points scored
+score:    resw 1        ; points scored
 hi_score: resw 1        ; highest points scored in session
 
 ; timer
@@ -135,7 +135,7 @@ _start:
     push rsp
 
     ; initialize ncurses with standard US locale
-    mov rsi, locale
+    mov rsi, LOCALE_STR
     mov rdi, LC_ALL
     call setlocale
     call initscr
@@ -158,31 +158,26 @@ _start:
     ; create snake segment buffer
     jmp .no_clr_sbuf                        ; don't clear snake buffer on first initialization
 .init_sbuf:
-    add rsp, [sbuf_size]                    ; clear snake buffer
+    add sp, [sbuf_size]                     ; clear snake buffer
 .no_clr_sbuf:
     mov word [sbuf_size], INIT_SBUF_SIZE    ; size of snake buffer
-    sub rsp, [sbuf_size]                    ; allocate space for circular snake buffer
+    sub rsp, INIT_SBUF_SIZE                 ; allocate space for circular snake buffer
     mov [sbuf_base], rsp                    ; save base address of buffer
 
-    xor rax, rax                            ; create mask for buffer indices
-    mov ax, [sbuf_size]                     ;
-    dec rax                                 ;
+    mov ax, INIT_SBUF_SIZE - 1              ; create mask for buffer indices
     mov [sbuf_mask], ax                     ;
 
     ; initialize snake
 .init_snake:
     mov byte [snake_dir], DIR_RIGHT     ; initialize direction right
-    mov word [snake_len], 4             ; initialize snake length
+    mov word [snake_len], 3             ; initialize snake length
     mov dword [rsp],      0x00040004    ; default snake placement
     mov dword [rsp + 4],  0x00040005    ;
     mov dword [rsp + 8],  0x00040006    ;
-    mov dword [rsp + 12], 0x00040007    ;
-    mov word [sbuf_off],  12            ; save offset of head withing buffer
+    mov word [sbuf_off],  8             ; save offset of head withing buffer
 
     ; draw snake
     call clear              ; clear in case resetting after death
-    xor r12, r12
-    mov r12w, [sbuf_mask]   ; get snake buffer index mask
     xor rcx, rcx
     mov cx, [snake_len]     ; loop over all snake segments
     xor rbp, rbp
@@ -191,11 +186,11 @@ _start:
 .init_loop:
     ; decrement snake segment offset
     sub rbp, 4
-    and rbp, r12
+    and bp, [sbuf_mask]
 .init_loop_start:
     ; print snake segment
     mov edi, [rbp + rsp]    ; get snake segment (offset + base addr)
-    mov rsi, block_char
+    mov rsi, BLOCK_CHAR
     mov rbx, rcx            ; cache rcx...
     call draw_char          ;
     mov rcx, rbx            ; ...restore rcx
@@ -206,28 +201,28 @@ _start:
 
     ; draw arena
     xor rcx, rcx
-    mov rcx, arena_size + 1     ; get length of walls surrounding arena
+    mov rcx, ARENA_SIZE + 1     ; get length of walls surrounding arena
 .draw_arena:
     mov rbx, rcx                ; cache rcx...
     mov rdi, rbx                ; draw top wall
-    add rdi, arena_y << 16      ; add y position
-    mov rsi, shade_l_char
+    add rdi, ARENA_Y << 16      ; add y position
+    mov rsi, SHADE_L_CHAR
     call draw_char
     mov rdi, rbx                ; draw bottom wall
     dec rdi                     ; calculate x position
-    add rdi, (arena_size + arena_y + 1) << 16   ; add y position
-    mov rsi, shade_l_char
+    add rdi, (ARENA_SIZE + ARENA_Y + 1) << 16   ; add y position
+    mov rsi, SHADE_L_CHAR
     call draw_char
     mov rdi, rbx                ; draw left wall
-    add rdi, arena_y - 1        ; calculate y position
+    add rdi, ARENA_Y - 1        ; calculate y position
     shl rdi, 16                 ;
-    mov rsi, shade_l_char
+    mov rsi, SHADE_L_CHAR
     call draw_char
     mov rdi, rbx                ; draw right wall
-    add rdi, arena_y            ; calculate y position
+    add rdi, ARENA_Y            ; calculate y position
     shl rdi, 16                 ;
-    add rdi, arena_size + 1     ; add x position
-    mov rsi, shade_l_char
+    add rdi, ARENA_SIZE + 1     ; add x position
+    mov rsi, SHADE_L_CHAR
     call draw_char
     mov rcx, rbx                ; ...restore rcx
     loop .draw_arena
@@ -239,8 +234,8 @@ _start:
     mov [hi_score], ax
 .reset_score:
     mov word [score], 0
-    print_score
-    print_hi_score
+    PRINT_SCORE
+    PRINT_HI_SCORE
 
     ; save start time
     mov rdi, CLOCK_MONOTONIC
@@ -271,31 +266,34 @@ _start:
     mov rsi, TIMER_ABSTIME
     xor r10, r10
     syscall
+    test rax, rax                   ; repeat sleep if interrupted
+    jnz .sleep                      ;
 
-    ; get input
+    ; get input (loop until valid input or no input is received)
+.get_input:
     call getch
     cmp ax, ERR         ; error, assume no input
     je .end_input       ;
 
     ; parse input
-    cmp rax, key_down   ; movement
+    cmp rax, KEY_DOWN   ; movement
     je .input_move
-    cmp rax, key_up
+    cmp rax, KEY_UP
     je .input_move
-    cmp rax, key_left
+    cmp rax, KEY_LEFT
     je .input_move
-    cmp rax, key_right
+    cmp rax, KEY_RIGHT
     je .input_move
-    cmp rax, key_q      ; quit
+    cmp rax, KEY_Q      ; quit
     je .exit_loop
-    jmp .end_input      ; no input
+    jmp .get_input      ; invalid input
 
 .input_move:
     ; ensure new direction is perpendicular
     ; (2nd least sig. bit must be different between new and old direction)
     xor al, [snake_dir]     ; xor new and old direction
     test al, 2              ; mask 2nd least sig. bit
-    jz .end_input           ; invalid direction, don't change
+    jz .get_input           ; invalid direction, don't change
 
     ; get movement direction
     xor al, [snake_dir]     ; undo previous xor
@@ -309,10 +307,10 @@ _start:
     mov edi, [rbp + rsp]    ; head offset + buffer base address
 
     ; move snake
-    xor rcx, rcx
-    mov cl, [snake_dir]
-    shl rcx, 3                  ; get jump table index from snake direction
-    jmp [abs move_table + rcx]  ; jump to movement update
+    xor rax, rax
+    mov al, [snake_dir]
+    shl rax, 3                  ; get jump table index from snake direction
+    jmp [abs MOVE_TABLE + rax]  ; jump to movement update
 
 .MT_L:                      ; move left
     dec edi
@@ -334,14 +332,14 @@ _start:
 
     ; make sure snake is in arena
     mov eax, edi
-    cmp ax, arena_x                 ; left wall
+    cmp ax, ARENA_X                 ; left wall
     jle .init_sbuf
-    cmp ax, arena_x + arena_size    ; right wall
+    cmp ax, ARENA_X + ARENA_SIZE    ; right wall
     jg .init_sbuf
     shr rax, 16                     ; get y position
-    cmp ax, arena_y                 ; top wall
+    cmp ax, ARENA_Y                 ; top wall
     jle .init_sbuf
-    cmp ax, arena_y + arena_size    ; bottom wall
+    cmp ax, ARENA_Y + ARENA_SIZE    ; bottom wall
     jg .init_sbuf
 
     ; save new head position
@@ -356,19 +354,19 @@ _start:
 
     ; draw head
     ; rdi already contains head location
-    mov rsi, block_char
+    mov rsi, BLOCK_CHAR
     call draw_char
 
     ; detect if food was eaten
     xor rax, rax
     mov eax, [food_pos]
     cmp eax, [rbp + rsp]    ; check if food and head location are the same
-    jne .no_food            ; if not, continue to erase tail
+    jne .erase_tail         ; if not, continue to erase tail
     call beep               ; ate food, play beep
 
     ; print score
     inc word [score]        ; increase score
-    print_score
+    PRINT_SCORE
 
     ; extend snake and add new food
     inc word [snake_len]
@@ -399,7 +397,7 @@ _start:
     call add_food
     jmp .main_loop          ; skip erasing tail
 
-.no_food:
+.erase_tail:
     ; erase tail
     xor rbx, rbx
     mov bx, [sbuf_mask]     ; get snake buffer index mask
@@ -409,7 +407,7 @@ _start:
     sub rbp, rax
     and rbp, rbx            ; calculate tail offset
     mov edi, [rbp + rsp]    ; get tail position
-    mov rsi, blank_char
+    mov rsi, BLANK_CHAR
     call draw_char
 
     ; bottom of .main_loop
@@ -467,7 +465,7 @@ rand_int:
 
     ; open /dev/urandom for reading
     mov rax, SYS_OPEN
-    mov rdi, urandom_path
+    mov rdi, URANDOM_PATH
     mov rsi, O_RDONLY
     syscall
 
@@ -498,7 +496,7 @@ add_food:
 .gen_location:
     call rand_int           ; generate random new food position
     and rax, 0x000F000F     ; mask position to fit within arena
-    add rax, arena_base     ; offset to fit within arena
+    add rax, ARENA_BASE     ; offset to fit within arena
 
     ; regenerate if inside snake
     mov edi, eax
@@ -509,7 +507,7 @@ add_food:
     mov [food_pos], edi     ; save location
 
     ; draw food
-    mov rsi, shade_m_char
+    mov rsi, SHADE_M_CHAR
     call draw_char
 
     add rsp, 8
